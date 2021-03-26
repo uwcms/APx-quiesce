@@ -1,0 +1,11 @@
+[Unit]
+Description=IPMC-ELM Link Quiesce Service
+Requires=elmlink.service
+After=elmlink.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/quiesced
+
+[Install]
+WantedBy=multi-user.target
