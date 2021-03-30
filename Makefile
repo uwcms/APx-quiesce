@@ -5,7 +5,7 @@ all: build
 build: quiesced
 
 quiesced: quiesced.o
-	$(CXX) $(CFLAGS) -o $@ $^
+	$(CXX) $(CFLAGS) -o $@ $^ -ldl
 
 %.o: %.cpp
 	$(CXX) $(CFLAGS) -c -o $@ $^

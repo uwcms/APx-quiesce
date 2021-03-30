@@ -10,8 +10,9 @@ License:        Reserved
 URL:            https://github.com/uwcms/APx-%{name}
 Source0:        %{name}-%{version_rpm_spec_version}.tar.gz
 
-#BuildRequires:  #
-Requires:       elmlink
+BuildRequires:  ledmgr-devel glibc-devel
+Requires:       elmlink glibc
+# We do not require ledmgr at runtime, but will use it via dlopen() if it is available.
 
 %global debug_package %{nil}
 

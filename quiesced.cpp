@@ -1,6 +1,8 @@
 #include <dirent.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <libledmgr.h>
 #include <list>
 #include <map>
 #include <memory>
@@ -19,6 +21,9 @@
 
 // The number of seconds between QUIESCE_SUBSCRIBE announcements.
 #define ANNOUNCE_INTERVAL 8
+
+// The socket to use to communicate with the IPMC.
+#define QUIESCE_SOCKET_PATH "/var/run/elmlinkd/quiesce"
 
 static inline bool timespec_le(const struct timespec &a, const struct timespec &b) {
 	if (a.tv_sec < b.tv_sec)
@@ -49,15 +54,38 @@ static inline struct timespec timespec_sub(const struct timespec &a, const struc
 	return c;
 }
 
+void indicate() {
+	void *lib = dlopen("libledmgr.so.1", RTLD_NOW | RTLD_LOCAL);
+	if (!lib) {
+		printf("We did not detect the presence of libledmgr.so.1. We will not indicate.\n");
+		return;
+	}
+	void *indicate_func = dlsym(lib, "ledmgr_indicate");
+	if (!indicate_func) {
+		printf("Found, but could not properly load libledmgr.so.1. We will not indicate.\n");
+		return;
+	}
+
+	printf("Indicating...\n");
+	time_t done = time(NULL) + 3;
+	while (time(NULL) <= done) {
+		reinterpret_cast<void (*)(uint32_t, uint32_t)>(indicate_func)(0x000000, LEDMGR_DEFAULT_LED);
+		usleep(80000);
+	}
+}
+
 int main(int argc, char *argv[]) {
 	if (argc != 1) {
 		fputs("Usage: quiesced\n", stderr);
 		return 1;
 	}
 
-	// Wait just a moment to ensure that the elmlinkd has had time to
-	// synchronize its channel index and provide us with the socket we expect.
-	sleep(2);
+	// Wait for the elmlinkd to synchronize its channel index and provide us
+	// with the socket we expect.
+	printf("Waiting for ELMLink quiesce socket.\n");
+	while (access(QUIESCE_SOCKET_PATH, R_OK | W_OK) != 0)
+		sleep(1);
+	printf("Found ELMLink quiesce socket.\n");
 
 	int sockfd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
 	if (sockfd < 0) {
@@ -68,7 +96,7 @@ int main(int argc, char *argv[]) {
 	struct sockaddr_un addr;
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, "/var/run/elmlinkd/quiesce", sizeof(addr.sun_path) - 1);
+	strncpy(addr.sun_path, QUIESCE_SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
 	if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(sockaddr_un)) < 0) {
 		close(sockfd);
@@ -76,50 +104,25 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 
-	struct timespec next_announce;
-	clock_gettime(CLOCK_MONOTONIC, &next_announce);
-	next_announce.tv_sec += ANNOUNCE_INTERVAL;
+	printf("Connected. Waiting for quiesce signal.\n");
 
 	while (true) {
-		struct timespec now;
-		clock_gettime(CLOCK_MONOTONIC, &now);
-
-		fd_set rfds, wfds;
-		FD_ZERO(&rfds);
-		FD_ZERO(&wfds);
-
-		FD_SET(sockfd, &rfds);
-
-		int selectrv;
-		if (timespec_le(next_announce, now)) {
-			// We need you to return as soon as we can write.
-			FD_SET(sockfd, &wfds);
-			selectrv = pselect(sockfd + 1, &rfds, &wfds, NULL, NULL, NULL);
-		}
-		else {
-			// We need you to return at our next announce interval so we can add to wfds.
-			struct timespec timeout = timespec_sub(next_announce, now);
-			selectrv = pselect(sockfd + 1, &rfds, &wfds, NULL, &timeout, NULL);
-		}
-
-		if (FD_ISSET(sockfd, &rfds)) {
-			uint8_t buf[32]; // We don't expect large packets.
-			int rv = recv(sockfd, buf, 32, 0);
-			if (rv > 0 && std::string((const char *)buf, rv) == "QUIESCE_NOW") {
-				printf("Quiesce requiested by IPMC.\n");
-				fflush(stdout);
-				close(sockfd);
-				execlp("systemctl", "systemctl", "halt");
-			}
-		}
-		if (FD_ISSET(sockfd, &wfds)) {
-			// If we even put sockfd IN wfds, it's announce time.
-			int rv = send(sockfd, "QUIESCE_SUBSCRIBE", strlen("QUIESCE_SUBSCRIBE"), 0);
-			if (rv > 0) {
-				clock_gettime(CLOCK_MONOTONIC, &next_announce);
-				next_announce.tv_sec += ANNOUNCE_INTERVAL;
-			}
+		uint8_t buf[32]; // We don't expect large packets.
+		int rv = recv(sockfd, buf, 32, 0);
+		if (rv > 0 && std::string((const char *)buf, rv) == "QUIESCE_NOW") {
+			printf("Quiesce requested by IPMC.\n");
+			fflush(stdout);
+			// Time to acknowledge it.
+			send(sockfd, "QUIESCE_ACKNOWLEDGED", strlen("QUIESCE_ACKNOWLEDGED"), 0);
+			close(sockfd);
+			// We're going to spend 2-3 of our seconds just spamming the
+			// white indicator, so front-panel users know we're about to
+			// quiesce.
+			indicate();
+			printf("Quiescing!\n");
+			execlp("systemctl", "systemctl", "halt");
 		}
 	}
+
 	return 1; // This shouldn't happen.
 }
