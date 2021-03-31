@@ -55,21 +55,14 @@ static inline struct timespec timespec_sub(const struct timespec &a, const struc
 }
 
 void indicate() {
-	void *lib = dlopen("libledmgr.so.1", RTLD_NOW | RTLD_LOCAL);
-	if (!lib) {
+	if (ledmgr_indicate_stubbed()) {
 		printf("We did not detect the presence of libledmgr.so.1. We will not indicate.\n");
 		return;
 	}
-	void *indicate_func = dlsym(lib, "ledmgr_indicate");
-	if (!indicate_func) {
-		printf("Found, but could not properly load libledmgr.so.1. We will not indicate.\n");
-		return;
-	}
-
 	printf("Indicating...\n");
 	time_t done = time(NULL) + 3;
 	while (time(NULL) <= done) {
-		reinterpret_cast<void (*)(uint32_t, uint32_t)>(indicate_func)(0x000000, LEDMGR_DEFAULT_LED);
+		ledmgr_indicate(0x000000, LEDMGR_DEFAULT_LED);
 		usleep(80000);
 	}
 }

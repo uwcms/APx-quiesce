@@ -5,7 +5,7 @@ all: build
 build: quiesced
 
 quiesced: quiesced.o
-	$(CXX) $(CFLAGS) -o $@ $^ -ldl
+	$(CXX) $(CFLAGS) -o $@ $^ -l:libledmgr-dl.a -ldl
 
 %.o: %.cpp
 	$(CXX) $(CFLAGS) -c -o $@ $^
